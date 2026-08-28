@@ -1,7 +1,0 @@
-.DS_Store
-DerivedData/
-build/
-KakaHunt.xcodeproj/
-*.xcuserstate
-xcuserdata/
-.swiftpm/
