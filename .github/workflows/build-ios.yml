@@ -1,0 +1,108 @@
+name: Build iOS IPA
+
+"on":
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack source archive when needed
+        shell: bash
+        run: |
+          if [ -f project.yml ]; then
+            echo "Source files already exist; no archive extraction is needed."
+            exit 0
+          fi
+
+          ARCHIVE_PATH=$(find . -maxdepth 1 -type f -name '卡卡捕猎场-GitHub构建源码*.zip' -print -quit)
+          if [ -z "$ARCHIVE_PATH" ]; then
+            echo "project.yml and the Kaka Hunt source archive are both missing."
+            exit 1
+          fi
+
+          ditto -x -k "$ARCHIVE_PATH" .
+          test -f project.yml
+          test -d KakaHunt
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          SIMULATOR_UDID=$(python3 - <<'PY'
+          import json
+          import subprocess
+
+          payload = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"])
+          devices_by_runtime = json.loads(payload)["devices"]
+          for runtime in sorted(devices_by_runtime, reverse=True):
+              if "iOS" not in runtime:
+                  continue
+              for device in devices_by_runtime[runtime]:
+                  if device.get("isAvailable") and "iPhone" in device["name"]:
+                      print(device["udid"])
+                      raise SystemExit(0)
+          raise SystemExit("No available iPhone simulator was found")
+          PY
+          )
+          echo "udid=$SIMULATOR_UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project KakaHunt.xcodeproj \
+            -scheme KakaHunt \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build/TestDerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build unsigned device app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project KakaHunt.xcodeproj \
+            -scheme KakaHunt \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "Release .app was not produced"
+            exit 1
+          fi
+
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          cd build/ipa
+          zip -qry ../KakaHunt-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KakaHunt-unsigned-IPA
+          path: build/KakaHunt-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
