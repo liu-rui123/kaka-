@@ -24,7 +24,7 @@ jobs:
             exit 0
           fi
 
-          ARCHIVE_PATH=$(find . -maxdepth 1 -type f -name '卡卡捕猎场-GitHub构建源码*.zip' -print -quit)
+          ARCHIVE_PATH=$(find . -maxdepth 1 -type f -name '卡卡捕猎场-GitHub构建源码*.zip' -print | sort -V | tail -n 1)
           if [ -z "$ARCHIVE_PATH" ]; then
             echo "project.yml and the Kaka Hunt source archive are both missing."
             exit 1
